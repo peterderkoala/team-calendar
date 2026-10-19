@@ -4,7 +4,7 @@ Short retro notes. The squad lead appends here after tasks that needed 2+ fix it
 Format: `- T-007: what went wrong -> rule for next time`
 
 ## Rules learned
-(none yet)
+- T-001: the developer was dispatched before anyone checked that the squad may run the stack's tools (dotnet, docker, git in a worktree) -> before the first developer of a new stack, the lead runs each gate command once (`dotnet --version`, `docker info`) and stops if any needs approval
 
 ## Ideas (out of scope, parked)
 (none yet)
