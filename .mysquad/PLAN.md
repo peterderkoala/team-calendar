@@ -24,7 +24,7 @@ Conventions for all tasks (fixed here so tasks stay disjoint):
 - UI tasks have no UI tests (D-20). Their acceptance: gates pass and the page calls the named endpoint(s).
 
 ### T-001 Solution skeleton, hosted Blazor WASM, Postgres, migrations at startup, test harness
-- status: todo
+- status: done
 - needs-design: no
 - depends_on: -
 - files: global.json, TeamCalendar.slnx, Directory.Build.props, .editorconfig, CLAUDE.md, Api/TeamCalendar.Api.csproj, Api/Program.cs, Api/appsettings.json, Api/Data/AppDbContext.cs, Api/Data/Migrations/*_Initial (migration), Client/TeamCalendar.Client.csproj, Client/Program.cs, Client/App.razor, Client/_Imports.razor, Client/Layout/MainLayout.razor, Client/Pages/Home.razor, Client/wwwroot/index.html, Shared/TeamCalendar.Shared.csproj, Tests/TeamCalendar.Tests.csproj, Tests/Infrastructure/ApiFactory.cs, Tests/HostingTests.cs
