@@ -11,6 +11,7 @@
 ## Blocked
 <!-- format: B-n | T-id | category | with architect / resolved by C-n -->
 B-1 | T-001 | missing-dependency (environment) | resolved by human (Q-3 answer, D-28)
+B-2 | T-001 | missing-dependency (environment): developer in a worktree cannot run any git command (guard refuses rtk-wrapped git it cannot prove stays in the worktree) | workaround: lead commits from the worktree with `git -C <worktree>`. Not a design question, not sent to architect
 
 ## Open questions
 <!-- format: Q-n: question | assumption made | affected tasks. The human answers by appending `| ANSWER: <text>` to the line; the squad processes answers at the start of each round. -->

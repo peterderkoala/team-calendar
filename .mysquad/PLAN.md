@@ -52,6 +52,14 @@ Conventions for all tasks (fixed here so tasks stay disjoint):
   - `docker compose --env-file .env.example config` exits 0 and shows service `app` (built from `.`, port 8080) and service `db` with image `postgres:17` and a named volume for its data
   - app service gets `ConnectionStrings__Default` and `TZ` from the env file; db service gets `POSTGRES_PASSWORD` from the env file
   - `.env.example` contains only placeholder values; `git check-ignore .env` reports `.env` as ignored
+- design:
+  - Build stage `FROM mcr.microsoft.com/dotnet/sdk:10.0.112` (D-29), copy global.json with the sources, `dotnet publish src/TeamCalendar.Api -c Release -o /app`. Runtime `mcr.microsoft.com/dotnet/aspnet:10.0`, `USER $APP_UID` (built-in non-root user), `ASPNETCORE_HTTP_PORTS=8080` is the image default. Rejected: dropping global.json from the context, because the container would build with an SDK the gates never ran.
+  - .dockerignore: `**/bin`, `**/obj`, `.git`, `.claude`, `.mysquad`, `.env`. `.claude/worktrees/` holds full repo copies with bin/obj; without the ignore they bloat the context.
+  - compose app ports: `"${APP_BIND:-127.0.0.1}:8080:8080"`; `.env.example` has `APP_BIND=127.0.0.1` with a comment: set 0.0.0.0 only if the proxy runs on another host. db publishes no ports.
+  - appsettings.json keeps T-001's `Password=change-me` placeholder; compose's `ConnectionStrings__Default` overrides it. Not a secret, and a missing env fails loudly on DB connect. Do not edit appsettings.json in T-002.
+  - Risks for the tester: the 10.0.112 tag must exist (`docker build .` proves it); `docker compose --env-file .env.example config` must show `host_ip: 127.0.0.1` on the app port and no `ports:` under db.
+- correction C-1 (after T-001 review): build image pinned to `sdk:10.0.112` instead of floating `sdk 10.0` | global.json pins 10.0.112 with `rollForward: disable`; a floating tag ships another patch and `docker build .` fails
+- correction C-2 (after T-001 review): app port bound to `${APP_BIND:-127.0.0.1}`, db publishes no port | T-001 trusts X-Forwarded-* from any source (D-17, KnownIPNetworks/KnownProxies cleared); a port open on 0.0.0.0 lets any client spoof client IP and scheme
 
 ### T-003 Identity store, admin role and Data Protection keys in Postgres
 - status: todo
