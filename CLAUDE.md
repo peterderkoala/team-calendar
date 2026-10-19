@@ -8,6 +8,10 @@ The repository holds no source code yet: only `README.md` (title only), an MIT `
 
 Update this file with commands and architecture notes once the first project lands.
 
+## Ambiguity
+
+On ambiguity read .mysquad/SPEC.md. If still unclear, log an OPEN QUESTION in .mysquad/STATUS.md and continue with other tasks.
+
 ## Branches
 
 Work happens on `dev`; `main` is the PR target.
