@@ -1,7 +1,9 @@
 # STATUS
 
 ## Current batch
-- T-001 | waiting on B-1 (environment), no code written yet
+- T-001 | waiting on B-1 (environment), no code written yet. Re-checked 2026-10-19: `dotnet` still needs approval, settings unchanged
+- Design round (2026-10-19, no stack tools needed): the architect added `design:` notes to T-003, T-004, T-006, T-008, T-012, T-014, T-015 and T-016, plus D-25 and D-26. The product-owner exempted logout from the must-change gate (T-004) and added Shared/AuthDtos.cs to T-008's files.
+- Every task depends on T-001, so no developer work is possible until Q-3 is answered
 
 ## Done
 (none)

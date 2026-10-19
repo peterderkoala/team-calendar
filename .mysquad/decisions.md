@@ -26,3 +26,5 @@ D-21 | 2026-10-19 | Squad may add well-maintained free OSS packages; if unsure -
 D-22 | 2026-10-19 | Data model changes beyond SPEC -> OPEN QUESTION | Protect scope
 D-23 | 2026-10-19 | May push dev and task branches; never push to or touch main, never force-push, never publish images, commit secrets/webhook URLs, or compose up against real data | Guardrails
 D-24 | 2026-10-19 | Run budget: max 10 rounds, max 2 parallel developers | User choice
+D-25 | 2026-10-19 | Every controller endpoint requires authentication via a global `AuthorizeFilter`; anonymous endpoints opt out with `[AllowAnonymous]`; security stamp validated on every request (ValidationInterval = 0), so stamp-changing calls must `RefreshSignInAsync` | Secure by default; deleted or reset users lose their sessions immediately
+D-26 | 2026-10-19 | Client localization uses `ResourcesPath = "Resources"`; a resx path mirrors its type's namespace below the project root (`Client/Resources/Pages/X.resx` for `Pages/X.razor`); only `X.resx` + `X.de.resx` | One lookup rule for all UI tasks; parity test globs it

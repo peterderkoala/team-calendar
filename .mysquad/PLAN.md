@@ -65,6 +65,16 @@ Conventions for all tasks (fixed here so tasks stay disjoint):
   - test: a user created via `UserManager` round-trips `MustChangePassword` and `Language`
   - test: after protecting a payload, the `DataProtectionKeys` table has at least one row, and a second app instance on the same database unprotects the payload
   - migration applies on an empty database (T-001 hosting test stays green)
+- design:
+  - Packages: Microsoft.AspNetCore.Identity.EntityFrameworkCore, Microsoft.AspNetCore.DataProtection.EntityFrameworkCore.
+  - `AddIdentity<AppUser, IdentityRole>().AddEntityFrameworkStores<AppDbContext>().AddDefaultTokenProviders()`. Rejected `AddIdentityCore`: it registers neither the cookie schemes nor the `Identity.TwoFactorUserId` scheme that T-008 needs. Do not also call `AddAuthentication().AddCookie()`, because that registers the scheme twice and throws.
+  - `ConfigureApplicationCookie`: `Events.OnRedirectToLogin = ctx => { ctx.Response.StatusCode = 401; return Task.CompletedTask; }`, and `OnRedirectToAccessDenied` returns 403 the same way. Make them unconditional: there is no server login page. .NET 10 already skips the redirect for `[ApiController]` endpoints, but these two lines also cover a controller that forgets the attribute.
+  - Secure by default (D-25): `AddControllers(o => o.Filters.Add(new AuthorizeFilter()))`. Anonymous endpoints opt out with `[AllowAnonymous]` (setup, login).
+  - Set `Configure<SecurityStampValidatorOptions>(o => o.ValidationInterval = TimeSpan.Zero)` so that deleted users and admin resets drop old sessions on the next request (one DB hit per request; fine for 20 users). Pitfall: any call that changes the security stamp (ChangePassword, enabling 2FA, ResetAuthenticatorKey) must be followed by `signInManager.RefreshSignInAsync(user)`, or the caller's own next request returns 401.
+  - Admin role: `builder.Entity<IdentityRole>().HasData(new IdentityRole { Id = "admin", Name = Roles.Admin, NormalizedName = "ADMIN", ConcurrencyStamp = "admin" })` in OnModelCreating, so no runtime seeding code is needed. Use fixed values, or every migration rewrites the row. Call `base.OnModelCreating` first.
+  - DP: `AddDataProtection().PersistKeysToDbContext<AppDbContext>().SetApplicationName("TeamCalendar")`. The application name pins key isolation independently of the content root path.
+  - Pipeline order: UseForwardedHeaders (T-001) -> UseAuthentication -> UseAuthorization -> MapControllers.
+  - Test pitfalls: keys are created lazily on the first Protect, so the DataProtectionKeys row exists only after it. For the second instance, use `factory.WithWebHostBuilder(_ => { })`: a new host on the same DB with an empty in-memory key ring, and no ApiFactory change. Identity's default password rules need test passwords like `Passw0rd!`.
 
 ### T-004 Login, logout, me and must-change-password gate
 - status: todo
@@ -78,9 +88,17 @@ Conventions for all tasks (fixed here so tasks stay disjoint):
   - after 5 failed logins (Identity default) the correct password also returns 401 and the user is locked out
   - GET /api/auth/me returns 401 without cookie and 200 with cookie; after logout it returns 401
   - login with header `X-Forwarded-Proto: https` sets a cookie with the `secure` attribute
-  - a user with `MustChangePassword` gets 403 on GET /api/auth/me and every other authenticated /api endpoint except POST /api/auth/change-password
+  - a user with `MustChangePassword` gets 403 on GET /api/auth/me and every other authenticated /api endpoint except POST /api/auth/change-password and POST /api/auth/logout
+  - note: exempting logout goes slightly beyond the SPEC wording ("403 on every API call except change-password"); a safety/usability guard so a must-change user can still log out
   - change-password with the correct current password and a valid new one returns 204, clears `MustChangePassword`, and GET /api/auth/me then returns 200; wrong current password or a password failing Identity validators returns 400
   - TestUsers helper creates a user (optionally admin, optionally must-change) and returns a logged-in HttpClient
+- design:
+  - Login: `signInManager.PasswordSignInAsync(userName, password, isPersistent: false, lockoutOnFailure: true)`. `Succeeded` returns 200 with a DTO built from `FindByNameAsync`; inside the same request `User` is still anonymous. Failed, IsLockedOut and NotAllowed all return 401. Leave the `RequiresTwoFactor` branch to T-008, so login keeps this shape (it mirrors MapIdentityApi). Rejected: `MapIdentityApi`, which is email-based, has a register endpoint and uses a different payload.
+  - Logout: `[AllowAnonymous]`, `SignOutAsync()`, 204. Me: `User.Identity.Name`, `User.IsInRole(Roles.Admin)`, MustChangePassword read from the DB user.
+  - Gate: a convention middleware class with `InvokeAsync(HttpContext ctx, UserManager<AppUser> um)`. Scoped services go into the InvokeAsync parameters, not the ctor, because middleware is a singleton. Logic: if the user is authenticated and `Path.StartsWithSegments("/api")` and the path is neither `/api/auth/change-password` nor `/api/auth/logout` (OrdinalIgnoreCase), load `um.GetUserAsync(ctx.User)`; if MustChangePassword, return 403. Register it with `app.UseMiddleware<>` after UseAuthentication and before UseAuthorization. Anonymous requests pass through and get 401 later.
+  - Change-password: set `user.MustChangePassword = false`, then `ChangePasswordAsync(user, current, new)`. ChangePasswordAsync saves only on success, so the flag and the hash land in one update. Errors return `ValidationProblem` (400). Success: `RefreshSignInAsync(user)` (the stamp changed, see T-003), then 204.
+  - Secure cookie: Identity's cookie uses `CookieSecurePolicy.SameAsRequest`, and ForwardedHeaders rewrites the scheme to https. Pitfall: under .NET 10 `-warnaserror`, use `KnownIPNetworks.Clear()`, not the obsolete `KnownNetworks`.
+  - Test pitfalls: the X-Forwarded-Proto test needs `CreateClient(new() { HandleCookies = false })` and asserts on the raw `Set-Cookie` header containing `secure`. The CookieContainer will not hand a secure cookie back over http. Lockout: 5 failures, then the correct password returns 401 (`AllowedForNewUsers` is true by default). TestUsers creates the user via `UserManager` in a service scope, adds `Roles.Admin` if needed, then POSTs login.
 
 ### T-005 Calendar data model: events, day notes, Discord settings
 - status: todo
@@ -108,6 +126,14 @@ Conventions for all tasks (fixed here so tasks stay disjoint):
   - with a wrong token it returns 403 and creates nothing
   - once any user exists it returns 409 and creates nothing, even with the correct token
   - token comparison is constant-time
+- design:
+  - `SetupToken`: a singleton with `public string Value { get; } = RandomNumberGenerator.GetHexString(64);` (256 bits) and `public SemaphoreSlim Lock { get; } = new(1, 1);`.
+  - Logging: in Program.cs, after migrations and before `app.Run()`, open a scope; if `!await db.Users.AnyAsync()`, write `app.Logger.LogWarning("Setup token: {SetupToken}", token.Value)`. The token lives only in memory, so each restart before setup issues a new one.
+  - GET `[AllowAnonymous]`: `{ required = !await db.Users.AnyAsync() }`.
+  - POST `[AllowAnonymous]`: `await token.Lock.WaitAsync()`, then inside the lock: if any user exists return 409; if `!CryptographicOperations.FixedTimeEquals(UTF8(input ?? ""), UTF8(token.Value))` return 403 (a length mismatch returns early, which leaks only the fixed length); then, in `db.Database.BeginTransactionAsync()`, `CreateAsync(user, pw)` + `AddToRoleAsync(user, Roles.Admin)` + commit. Identity errors return 400, otherwise 201. The transaction prevents a half-created admin that would close setup for good.
+  - Race safety: the check-and-create runs inside the semaphore. `ponytail: in-process lock, valid for the single app container (D-2); use pg_advisory_xact_lock if the app ever scales out.` Rejected: relying on a DB constraint, because no natural unique key covers "first user".
+  - Order matters: the 409 check comes before the token check, so after setup the correct token yields 409, not 201 and not 403.
+  - Test pitfalls: register CapturingLoggerProvider via `builder.ConfigureLogging(l => l.AddProvider(p))` in WithWebHostBuilder before the first CreateClient (the host starts lazily). Read the token from the structured state key `SetupToken`, not by parsing text. Each test needs a fresh DB (ApiFactory, T-001).
 
 ### T-007 Users admin API
 - status: todo
@@ -127,7 +153,7 @@ Conventions for all tasks (fixed here so tasks stay disjoint):
 - status: todo
 - needs-design: yes
 - depends_on: T-004
-- files: Api/Controllers/AuthController.cs, Api/Controllers/TwoFactorController.cs, Api/TeamCalendar.Api.csproj, Shared/TwoFactorDtos.cs, Tests/TeamCalendar.Tests.csproj, Tests/TwoFactorTests.cs
+- files: Api/Controllers/AuthController.cs, Api/Controllers/TwoFactorController.cs, Api/TeamCalendar.Api.csproj, Shared/AuthDtos.cs, Shared/TwoFactorDtos.cs, Tests/TeamCalendar.Tests.csproj, Tests/TwoFactorTests.cs
 - note: adds QRCoder (server-side QR as SVG, D-6) to Api and Otp.NET (TOTP codes in tests) to Tests.
 - seams: GET /api/auth/2fa, POST /api/auth/2fa/enable, POST /api/auth/2fa/disable, POST /api/auth/login (with twoFactorCode or recoveryCode)
 - acceptance:
@@ -136,6 +162,14 @@ Conventions for all tasks (fixed here so tasks stay disjoint):
   - with 2FA on, login with only password returns 401 with `requiresTwoFactor: true` and GET /api/auth/me stays 401
   - login with password plus valid TOTP returns 200; with password plus an unused recovery code returns 200; the same recovery code a second time returns 401
   - disable returns 204 and password-only login works again
+- design:
+  - Login (AuthController): after `PasswordSignInAsync` returns `RequiresTwoFactor`, a request with `TwoFactorCode` goes to `TwoFactorAuthenticatorSignInAsync(code, isPersistent: false, rememberClient: false)`, a request with `RecoveryCode` goes to `TwoFactorRecoveryCodeSignInAsync(code)`, and a request with neither returns 401 `{ requiresTwoFactor = true }`. This works in one request because SignInManager (.NET 8+) caches the two-factor info it has just issued; this is the same pattern as MapIdentityApi. It needs the `Identity.TwoFactorUserId` scheme from `AddIdentity` (T-003). Rejected: a 2-step API with a second endpoint that reads the TwoFactorUserId cookie; it adds an endpoint and client state for no gain.
+  - `rememberClient: false` is mandatory. Otherwise the TwoFactorRememberMe cookie lets later password-only logins through.
+  - Strip spaces and hyphens from the TOTP code. Pass the recovery code as typed (format `xxxxx-xxxxx`).
+  - GET /2fa: `GetAuthenticatorKeyAsync(user)`; if null, call `ResetAuthenticatorKeyAsync` and read the key again. URI: `otpauth://totp/TeamCalendar:{Uri.EscapeDataString(name)}?secret={key}&issuer=TeamCalendar&digits=6`. SVG: `new SvgQRCode(new QRCodeGenerator().CreateQrCode(uri, QRCodeGenerator.ECCLevel.Q)).GetGraphic(4)`.
+  - Enable: `VerifyTwoFactorTokenAsync(user, um.Options.Tokens.AuthenticatorTokenProvider, code)` false returns 400. Otherwise `SetTwoFactorEnabledAsync(true)`, `GenerateNewTwoFactorRecoveryCodesAsync(user, 10)`, `RefreshSignInAsync(user)` (the stamp changed, see T-003), then 200 with the codes. Disable: `SetTwoFactorEnabledAsync(false)` + `ResetAuthenticatorKeyAsync` + `RefreshSignInAsync`, then 204.
+  - Test pitfalls: compute codes with Otp.NET `new Totp(Base32Encoding.ToBytes(key)).ComputeTotp()`; Identity uses the real clock. A code reused within the same 30 s step is accepted today; if a future Identity version rejects reuse, wait for the next step. Read the 401 body for `requiresTwoFactor`, and check that /me stays 401 (only the TwoFactorUserId cookie was set).
+  - files: `Shared/AuthDtos.cs` is missing. LoginRequest needs `TwoFactorCode?` and `RecoveryCode?`, and the 401 body needs `RequiresTwoFactor` (see the reply to the lead).
 
 ### T-009 Events API and instance time zone
 - status: todo
@@ -188,6 +222,15 @@ Conventions for all tasks (fixed here so tasks stay disjoint):
   - a webhook URL that is not an absolute https URL returns 400; reminderMinutes outside 1..1440 returns 400; language other than "en"/"de" returns 400
   - POST test with a configured URL sends exactly one POST to that URL (fake handler) and returns 204; without a URL returns 400 and sends nothing
   - a member gets 403 and unauthenticated gets 401 on all three endpoints
+- design:
+  - `DiscordClient(HttpClient http)`: `Task PostAsync(string webhookUrl, string content, CancellationToken ct)` sends `PostAsJsonAsync(url, new { content })` and calls `EnsureSuccessStatusCode()`. Also `public static IDataProtector Protector(IDataProtectionProvider p) => p.CreateProtector("TeamCalendar.Discord.WebhookUrl");`. The purpose string is defined in that one place and never changes, because a new purpose cannot decrypt stored URLs. T-013 and T-014 reuse it.
+  - Register it as `builder.Services.AddHttpClient<DiscordClient>(c => c.Timeout = TimeSpan.FromSeconds(10));`. Rejected: an `IDiscordClient` interface plus a fake. Replacing the handler is the seam (SPEC), and one implementation needs no interface.
+  - Controller: `[Authorize(Roles = Roles.Admin)]`. Load the row with `FindAsync(1)`; a missing row means defaults, and PUT adds it if missing (whether or not T-005 seeds a row).
+  - PUT: when `WebhookUrl` is null, keep the stored value; when it is "", clear it (set ProtectedWebhookUrl to null); otherwise require `Uri.TryCreate(url, UriKind.Absolute, out var u) && u.Scheme == Uri.UriSchemeHttps`, else 400. Then store `Protector.Protect(url)`. ReminderMinutes must be in 1..1440 and Language must be "en" or "de", else 400.
+  - Mask: `$"{u.Scheme}://{u.Host}/…{url[^4..]}"`; null when unset. The full path or token never leaves the server.
+  - POST test: no URL returns 400. Otherwise send a plain English "TeamCalendar test message" (the resx arrives in T-013), even if Enabled is false. Success returns 204; `HttpRequestException`/timeout returns 502.
+  - FakeHttpHandler: a singleton that records (method, uri, body string) in a ConcurrentQueue and returns 204. Read the body inside SendAsync, because the content is disposed afterwards. Tests swap it with `ConfigureTestServices(s => s.AddHttpClient<DiscordClient>().ConfigurePrimaryHttpMessageHandler(() => fake))`; the last registered primary handler wins.
+  - Test pitfall: the plaintext check reads the `ProtectedWebhookUrl` column through a fresh DbContext and asserts it does not contain the URL.
 
 ### T-013 Discord messages on event create, update, delete
 - status: todo
@@ -214,6 +257,14 @@ Conventions for all tasks (fixed here so tasks stay disjoint):
   - events whose start is at or before now are skipped (a reminder missed during downtime is sent only if the event has not started)
   - nothing is posted when Discord is disabled or no URL is set
   - the hosted service calls `TickAsync` once per minute via the injected `TimeProvider`
+- design:
+  - `ReminderService(IServiceScopeFactory scopes, TimeProvider time, ILogger<ReminderService> log) : BackgroundService`. Register it as `AddSingleton<ReminderService>()` + `AddHostedService(sp => sp.GetRequiredService<ReminderService>())`, so tests resolve the same instance that runs the loop.
+  - ExecuteAsync: `using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1), time);` then `do { try { await TickAsync(ct); } catch (Exception ex) when (ex is not OperationCanceledException) { log } } while (await timer.WaitForNextTickAsync(ct));`. The first tick runs immediately (catch-up after downtime). The catch is required: by default an unhandled BackgroundService exception stops the host.
+  - TickAsync: `await _gate.WaitAsync(ct)` (SemaphoreSlim(1)), so the loop and a manual test tick never interleave. A new scope per tick provides the AppDbContext and DiscordNotifier. If disabled or no URL, return. `now = time.GetUtcNow().UtcDateTime` (Kind=Utc; Npgsql rejects other kinds). Query `StartUtc > now && StartUtc <= now.AddMinutes(ReminderMinutes) && ReminderSentForStartUtc != StartUtc`; EF's C# null semantics make null count as "not sent".
+  - Per event: post the reminder, then set `ReminderSentForStartUtc = StartUtc`, then SaveChanges. If the post fails, do not mark the event; it retries on the next tick until it starts. Rejected: marking before posting, which loses reminders on webhook errors.
+  - Re-arm needs no code in EventsController, because a new StartUtc no longer equals ReminderSentForStartUtc. Known limit: moving the start back to the exact start that was already reminded does not remind again.
+  - DiscordNotifier gets `ReminderAsync(...)`, which reuses T-013's settings load, unprotect, culture and TZ formatting, plus one `Reminder` key in both resx files.
+  - Test pitfalls: FakeTimeProvider `Advance`/`SetUtcNow` also fires the hosted loop. Assert on fake-handler counts after the manual `TickAsync`, which waits on the gate. For "once per minute", Advance(1 min) and poll the handler with a timeout.
 
 ### T-015 Profile language API
 - status: todo
@@ -226,6 +277,10 @@ Conventions for all tasks (fixed here so tasks stay disjoint):
   - PUT with language "de" or "en" returns 204 and the value persists across a new login; null resets to unset
   - any other language value returns 400
   - unauthenticated returns 401
+- design:
+  - DTOs `ProfileDto(string UserName, string? Language)` and `UpdateProfileRequest(string? Language)`.
+  - GET: `um.GetUserAsync(User)` returns `ProfileDto`. PUT: a value that is not null, "de" or "en" returns 400 (exact lowercase). Otherwise `user.Language = value; await um.UpdateAsync(user)`, then 204. `UpdateAsync` does not touch the security stamp, so no refresh is needed.
+  - Pitfall: the must-change gate (T-004) returns 403 here as well, and the client (T-016) treats that as "unset".
 
 ### T-016 Client localization setup and resource parity test
 - status: todo
@@ -237,6 +292,13 @@ Conventions for all tasks (fixed here so tasks stay disjoint):
   - unit test: profile "de" -> de; profile "en" -> en; unset and browser de-AT -> de; unset and browser fr-FR -> en; unset and browser en-US -> en
   - unit test: every `*.resx` under `src/` has a `*.de.resx` partner with exactly the same keys, and vice versa
   - Client loads all globalization data, calls GET /api/profile at startup (401/403 = unset), sets default culture and UI culture from `CultureChoice.Resolve` before the app renders, and registers `AddLocalization`
+- design:
+  - `CultureChoice.Resolve(string? profileLanguage, string browserCulture)` returns "de" or "en": `var c = profileLanguage ?? browserCulture; return c == "de" || c.StartsWith("de-", OrdinalIgnoreCase) ? "de" : "en";`. Neutral "de"/"en" match the `.de.resx` lookup and format dates correctly.
+  - csproj: `<BlazorWebAssemblyLoadAllGlobalizationData>true</BlazorWebAssemblyLoadAllGlobalizationData>` and `<SatelliteResourceLanguages>en;de</SatelliteResourceLanguages>`. Keep InvariantGlobalization off (the default). Add the package Microsoft.Extensions.Localization.
+  - Program.cs: `AddLocalization(o => o.ResourcesPath = "Resources")`; `var host = builder.Build();` then resolve `HttpClient` (T-001 registration) and GET /api/profile. A success response supplies Language; any other status means null. Pass `CultureInfo.CurrentCulture.Name` as the browser culture, because WASM initialises it from navigator.language. Set `CultureInfo.DefaultThreadCurrentCulture` and `DefaultThreadCurrentUICulture` to `new CultureInfo(choice)` before `await host.RunAsync()`; RunAsync loads the satellite assembly of the changed culture. Setting the culture after RunAsync does not work.
+  - Resource naming (D-26): with ResourcesPath "Resources", type `TeamCalendar.Client.X.Y` resolves to `Client/Resources/X/Y.resx`. `SharedResource.cs` is an empty marker class in the root namespace, and page resx files sit in `Client/Resources/Pages/`, as in T-018..T-024.
+  - Parity test: walk up from `AppContext.BaseDirectory` to the folder that contains `TeamCalendar.slnx`, glob `src/**/*.resx`, and pair `X.resx` with `X.de.resx`. Compare `XDocument.Load(f).Root!.Elements("data").Select(e => (string)e.Attribute("name")!)` as sets and ignore `resheader`. The test therefore covers later pairs automatically, including T-013's Api resx.
+  - Pitfall: a SharedResource pair with zero keys passes parity. Add one real key (e.g. `AppTitle`) so the lookup is exercised.
 
 ### T-017 Client shell: session, layout, login, change password
 - status: todo
