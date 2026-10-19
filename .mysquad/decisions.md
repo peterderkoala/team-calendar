@@ -24,5 +24,5 @@ D-19 | 2026-10-19 | Gates: dotnet build -warnaserror; dotnet test; dotnet format
 D-20 | 2026-10-19 | Tests: xUnit + WebApplicationFactory + Testcontainers.PostgreSql at API seams; no UI tests | Real DB dialect; UI stays thin
 D-21 | 2026-10-19 | Squad may add well-maintained free OSS packages; if unsure -> OPEN QUESTION | User choice
 D-22 | 2026-10-19 | Data model changes beyond SPEC -> OPEN QUESTION | Protect scope
-D-23 | 2026-10-19 | Never push, touch main, publish images, commit secrets/webhook URLs, or compose up against real data | Guardrails
+D-23 | 2026-10-19 | May push dev and task branches; never push to or touch main, never force-push, never publish images, commit secrets/webhook URLs, or compose up against real data | Guardrails
 D-24 | 2026-10-19 | Run budget: max 10 rounds, max 2 parallel developers | User choice

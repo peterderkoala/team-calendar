@@ -54,5 +54,5 @@ Recurrence, multiple calendars or teams, email, iCal export/import/sync, file at
 - **Squad decides alone**: naming, project layout, UI layout, month-grid approach, well-maintained free open-source packages.
 - **OPEN QUESTION in `.mysquad/STATUS.md`** (then continue with other tasks): unsure about a package, data model changes beyond this spec, anything contradicting this spec.
 - **Needs an architect design note first**: auth and 2FA, setup token, Data Protection and webhook encryption, reminder service, localization setup.
-- **Never**: push, touch `main`, publish Docker images, commit secrets or real webhook URLs, run `docker compose up` against real data.
+- **Never**: push to or touch `main`, force-push, publish Docker images, commit secrets or real webhook URLs, run `docker compose up` against real data.
 - **Budget**: max 10 loop rounds, max 2 developers in parallel.
