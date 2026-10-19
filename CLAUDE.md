@@ -2,11 +2,23 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Current state
+Team calendar: ASP.NET Core API hosting a Blazor WebAssembly client (MudBlazor), PostgreSQL via EF Core. Squad rules live in `.mysquad/`.
 
-The repository holds no source code yet: only `README.md` (title only), an MIT `LICENSE`, and a `.gitignore` taken from GitHub's VisualStudio template, which suggests a .NET / Visual Studio stack is planned. There are no build, lint or test commands yet.
+## Commands (repo root, SDK pinned in `global.json`)
+- Build: `dotnet build -warnaserror`
+- Test: `dotnet test` (needs a running Docker daemon: Testcontainers starts `postgres:17`)
+- Format check: `dotnet format --verify-no-changes`
+- Docker: `docker build .` (Dockerfile arrives in T-002)
 
-Update this file with commands and architecture notes once the first project lands.
+## Layout
+- `TeamCalendar.slnx`
+- `src/TeamCalendar.Api`: host, controllers, EF Core `AppDbContext`, migrations in `Data/Migrations/` (applied at startup)
+- `src/TeamCalendar.Client`: Blazor WASM, served by the Api
+- `src/TeamCalendar.Shared`: request/response DTOs
+- `tests/TeamCalendar.Tests`: xUnit, `WebApplicationFactory<Program>` via `Infrastructure/ApiFactory` (fresh database per instance)
+
+## Config
+- `ConnectionStrings:Default` (Postgres), `TZ` (instance time zone)
 
 ## Ambiguity
 
