@@ -24,7 +24,8 @@ app.UseForwardedHeaders();
 app.UseBlazorFrameworkFiles();
 app.UseStaticFiles();
 app.MapControllers();
-app.MapFallbackToFile(@"{*path:regex(^(?!api(/|$)).*)}", "index.html"); // /api/* stays a real 404
+app.MapFallbackToFile("/", "index.html"); // catch-all below does not match the empty path
+app.MapFallbackToFile(@"{*path:nonfile:regex(^(?!api(/|$)).*)}", "index.html"); // /api/* stays a real 404
 
 app.Run();
 

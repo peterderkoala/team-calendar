@@ -12,13 +12,23 @@ public class HostingTests : IClassFixture<ApiFactory>
 
     public HostingTests(ApiFactory factory) => _factory = factory;
 
-    [Fact]
-    public async Task Unknown_client_route_serves_index_html()
+    [Theory]
+    [InlineData("/")]
+    [InlineData("/some/client/route")]
+    public async Task Client_route_serves_index_html(string path)
     {
-        var res = await _factory.CreateClient().GetAsync("/some/client/route");
+        var res = await _factory.CreateClient().GetAsync(path);
 
         Assert.Equal(HttpStatusCode.OK, res.StatusCode);
         Assert.Contains("<title>TeamCalendar</title>", await res.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task Missing_static_file_is_404_not_the_client_fallback()
+    {
+        var res = await _factory.CreateClient().GetAsync("/missing.js");
+
+        Assert.Equal(HttpStatusCode.NotFound, res.StatusCode);
     }
 
     [Fact]
